@@ -1,0 +1,8 @@
+/target/
+
+/test_outputs/
+!/test_outputs/benchmarks/.gitkeep
+!/test_outputs/medium/.gitkeep
+
+.DS_Store
+trade converter rust/
