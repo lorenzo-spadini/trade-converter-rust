@@ -1,4 +1,5 @@
 use std::fs::File;
+use std::io::BufWriter;
 use std::path::Path;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -16,7 +17,7 @@ use parquet::file::properties::WriterProperties;
 
 use crate::decimal::{PRICE_PRECISION, PRICE_SCALE, Price};
 
-pub const BATCH_SIZE: usize = 50_000;
+pub const BATCH_SIZE: usize = 200_000;
 const CHICAGO_TZ: &str = "America/Chicago";
 
 pub fn raw_schema() -> SchemaRef {
@@ -263,7 +264,7 @@ impl TradeBuilders {
 
 pub struct RawParquetWriter {
     schema: SchemaRef,
-    writer: ArrowWriter<File>,
+    writer: ArrowWriter<BufWriter<File>>,
     builders: RawBuilders,
     pub write_time: Duration,
 }
@@ -271,7 +272,8 @@ pub struct RawParquetWriter {
 impl RawParquetWriter {
     pub fn create(path: &Path) -> Result<Self> {
         let schema = raw_schema();
-        let writer = ArrowWriter::try_new(File::create(path)?, schema.clone(), Some(properties()))?;
+        let file = BufWriter::with_capacity(16 * 1024 * 1024, File::create(path)?);
+        let writer = ArrowWriter::try_new(file, schema.clone(), Some(properties()))?;
         Ok(Self {
             schema,
             writer,
@@ -295,7 +297,6 @@ impl RawParquetWriter {
         let batch = self.builders.finish(self.schema.clone())?;
         let started = Instant::now();
         self.writer.write(&batch)?;
-        self.writer.flush()?;
         self.write_time += started.elapsed();
         Ok(())
     }
@@ -311,7 +312,7 @@ impl RawParquetWriter {
 
 pub struct TradesParquetWriter {
     schema: SchemaRef,
-    writer: ArrowWriter<File>,
+    writer: ArrowWriter<BufWriter<File>>,
     builders: TradeBuilders,
     pub write_time: Duration,
 }
@@ -319,7 +320,8 @@ pub struct TradesParquetWriter {
 impl TradesParquetWriter {
     pub fn create(path: &Path) -> Result<Self> {
         let schema = trades_schema();
-        let writer = ArrowWriter::try_new(File::create(path)?, schema.clone(), Some(properties()))?;
+        let file = BufWriter::with_capacity(16 * 1024 * 1024, File::create(path)?);
+        let writer = ArrowWriter::try_new(file, schema.clone(), Some(properties()))?;
         Ok(Self {
             schema,
             writer,
@@ -343,7 +345,6 @@ impl TradesParquetWriter {
         let batch = self.builders.finish(self.schema.clone())?;
         let started = Instant::now();
         self.writer.write(&batch)?;
-        self.writer.flush()?;
         self.write_time += started.elapsed();
         Ok(())
     }
