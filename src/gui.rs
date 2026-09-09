@@ -2,7 +2,7 @@ use std::path::PathBuf;
 use std::thread;
 
 use crossbeam_channel::{Receiver, Sender, unbounded};
-use eframe::egui;
+use eframe::{Renderer, egui};
 
 use crate::converter::{ConversionOptions, convert_source};
 
@@ -172,6 +172,7 @@ impl eframe::App for ConverterApp {
 pub fn run() -> eframe::Result {
     let options = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default().with_inner_size([680.0, 480.0]),
+        renderer: Renderer::Wgpu,
         ..Default::default()
     };
     eframe::run_native(
