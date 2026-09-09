@@ -30,6 +30,7 @@ fn main() -> Result<()> {
                 ConversionOptions {
                     tick_size: arguments.tick_size.as_deref(),
                     log: Some(&logger),
+                    write_raw: true,
                 },
             )?;
             let metrics = serde_json::to_string_pretty(&result.metrics)?;

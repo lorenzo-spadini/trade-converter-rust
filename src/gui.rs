@@ -15,6 +15,7 @@ pub struct ConverterApp {
     source: String,
     destination: String,
     tick_size: String,
+    write_raw: bool,
     logs: Vec<String>,
     converting: bool,
     sender: Sender<WorkerMessage>,
@@ -28,6 +29,7 @@ impl Default for ConverterApp {
             source: String::new(),
             destination: String::new(),
             tick_size: String::new(),
+            write_raw: false,
             logs: Vec::new(),
             converting: false,
             sender,
@@ -46,6 +48,7 @@ impl ConverterApp {
             return;
         }
         let tick = self.tick_size.trim().to_string();
+        let write_raw = self.write_raw;
         let sender = self.sender.clone();
         self.converting = true;
         self.logs.clear();
@@ -62,6 +65,7 @@ impl ConverterApp {
                 ConversionOptions {
                     tick_size: if tick.is_empty() { None } else { Some(&tick) },
                     log: Some(&logger),
+                    write_raw,
                 },
             )
             .map(|result| {
@@ -140,6 +144,11 @@ impl eframe::App for ConverterApp {
                         [150.0, 24.0],
                         egui::TextEdit::singleline(&mut self.tick_size),
                     );
+                    ui.label("");
+                    ui.end_row();
+
+                    ui.label("Write RAW Parquet:");
+                    ui.checkbox(&mut self.write_raw, "");
                     ui.label("");
                     ui.end_row();
                 });

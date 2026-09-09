@@ -16,10 +16,20 @@ use crate::validation::{FileReport, FileValidation, Totals, ValidationDocument};
 
 pub type LogCallback = dyn Fn(&str) + Send + Sync;
 
-#[derive(Default)]
 pub struct ConversionOptions<'a> {
     pub tick_size: Option<&'a str>,
     pub log: Option<&'a LogCallback>,
+    pub write_raw: bool,
+}
+
+impl<'a> Default for ConversionOptions<'a> {
+    fn default() -> Self {
+        Self {
+            tick_size: None,
+            log: None,
+            write_raw: true,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -100,14 +110,17 @@ pub fn convert_source(
     let contract = detect_contract(&source)?;
     let instrument = contract.split('_').next().unwrap_or(&contract).to_string();
     let paths = output_paths(&destination, &contract);
-    for path in [
-        &paths.raw,
+    let mut protected_paths = vec![
         &paths.trades,
         &paths.validation,
-        &paths.partial_raw,
         &paths.partial_trades,
         &paths.partial_validation,
-    ] {
+    ];
+    if options.write_raw {
+        protected_paths.push(&paths.raw);
+        protected_paths.push(&paths.partial_raw);
+    }
+    for path in protected_paths {
         if path.exists() {
             bail!("Refusing to overwrite existing output: {}", path.display());
         }
@@ -131,6 +144,11 @@ pub fn convert_source(
         )),
         None => log("Tick alignment: not performed (Tick Size is empty)"),
     }
+    log(if options.write_raw {
+        "RAW Parquet: enabled"
+    } else {
+        "RAW Parquet: disabled"
+    });
 
     let mut warnings = Vec::new();
     for path in &csv_files {
@@ -139,7 +157,11 @@ pub fn convert_source(
         }
     }
 
-    let mut raw_writer = RawParquetWriter::create(&paths.partial_raw)?;
+    let mut raw_writer = if options.write_raw {
+        Some(RawParquetWriter::create(&paths.partial_raw)?)
+    } else {
+        None
+    };
     let mut trades_writer = TradesParquetWriter::create(&paths.partial_trades)?;
     let mut files = Vec::<FileReport>::new();
     let mut totals = Totals::default();
@@ -180,7 +202,7 @@ pub fn convert_source(
                     validation.errors.push(message.clone());
                     files.push(validation.report(csv_path));
                     totals.add(&validation);
-                    let _ = raw_writer.close();
+                    close_raw_writer(&mut raw_writer);
                     let _ = trades_writer.close();
                     write_failure_validation(
                         &paths,
@@ -251,7 +273,7 @@ pub fn convert_source(
                 validation.errors.push(message.clone());
                 files.push(validation.report(csv_path));
                 totals.add(&validation);
-                let _ = raw_writer.close();
+                close_raw_writer(&mut raw_writer);
                 let _ = trades_writer.close();
                 write_failure_validation(
                     &paths,
@@ -280,7 +302,7 @@ pub fn convert_source(
             validation.errors.push(message.clone());
             files.push(validation.report(csv_path));
             totals.add(&validation);
-            let _ = raw_writer.close();
+            close_raw_writer(&mut raw_writer);
             let _ = trades_writer.close();
             write_failure_validation(
                 &paths,
@@ -304,7 +326,10 @@ pub fn convert_source(
         totals.add(&validation);
     }
 
-    let raw_write_time = raw_writer.close()?;
+    let raw_write_time = match raw_writer.take() {
+        Some(writer) => writer.close()?,
+        None => Duration::ZERO,
+    };
     let trades_write_time = trades_writer.close()?;
     let validation_document = ValidationDocument::new(
         source.to_string_lossy().into_owned(),
@@ -319,7 +344,9 @@ pub fn convert_source(
     );
     let validation_text = serde_json::to_string_pretty(&validation_document)?;
     fs::write(&paths.partial_validation, validation_text)?;
-    fs::rename(&paths.partial_raw, &paths.raw)?;
+    if options.write_raw {
+        fs::rename(&paths.partial_raw, &paths.raw)?;
+    }
     fs::rename(&paths.partial_trades, &paths.trades)?;
     fs::rename(&paths.partial_validation, &paths.validation)?;
 
@@ -345,13 +372,21 @@ pub fn convert_source(
         csv_read_seconds: csv_read_time.as_secs_f64(),
         processing_seconds: processing_time.as_secs_f64(),
         parquet_write_seconds: (raw_write_time + trades_write_time).as_secs_f64(),
-        raw_bytes: paths.raw.metadata()?.len(),
+        raw_bytes: if options.write_raw {
+            paths.raw.metadata()?.len()
+        } else {
+            0
+        },
         trades_bytes: paths.trades.metadata()?.len(),
         validation_bytes: paths.validation.metadata()?.len(),
         status: validation_document.status.clone(),
     };
     log("Conversion complete.");
-    log(&format!("RAW: {}", paths.raw.display()));
+    if options.write_raw {
+        log(&format!("RAW: {}", paths.raw.display()));
+    } else {
+        log("RAW: skipped");
+    }
     log(&format!("TRADES: {}", paths.trades.display()));
     log(&format!("VALIDATION: {}", paths.validation.display()));
     log(&format!("Overall status: {}", metrics.status));
@@ -373,7 +408,7 @@ fn process_l1(
     tick_size: Option<ExactDecimal>,
     timestamps: &mut TimestampConverter,
     validation: &mut FileValidation,
-    raw_writer: &mut RawParquetWriter,
+    raw_writer: &mut Option<RawParquetWriter>,
     trades_writer: &mut TradesParquetWriter,
     current_bid: &mut Option<Price>,
     current_ask: &mut Option<Price>,
@@ -421,21 +456,23 @@ fn process_l1(
         validation.previous_daily_volume = Some(volume);
     }
 
-    raw_writer.append(RawRow {
-        source_file,
-        source_line,
-        event_kind: "L1",
-        market_data_type,
-        source_timestamp,
-        offset_100ns,
-        timestamp_ns,
-        price,
-        price_text,
-        volume,
-        operation: None,
-        position: None,
-        market_maker: None,
-    })?;
+    if let Some(raw_writer) = raw_writer.as_mut() {
+        raw_writer.append(RawRow {
+            source_file,
+            source_line,
+            event_kind: "L1",
+            market_data_type,
+            source_timestamp,
+            offset_100ns,
+            timestamp_ns,
+            price,
+            price_text,
+            volume,
+            operation: None,
+            position: None,
+            market_maker: None,
+        })?;
+    }
 
     match market_data_type {
         1 => *current_bid = Some(price),
@@ -501,7 +538,7 @@ fn process_l2(
     tick_size: Option<ExactDecimal>,
     timestamps: &mut TimestampConverter,
     validation: &mut FileValidation,
-    raw_writer: &mut RawParquetWriter,
+    raw_writer: &mut Option<RawParquetWriter>,
 ) -> Result<()> {
     if record.len() != 9 {
         bail!(
@@ -538,22 +575,30 @@ fn process_l2(
         source_line,
     )?;
     validation.l2 += 1;
-    raw_writer.append(RawRow {
-        source_file,
-        source_line,
-        event_kind: "L2",
-        market_data_type,
-        source_timestamp,
-        offset_100ns,
-        timestamp_ns,
-        price,
-        price_text,
-        volume,
-        operation: Some(operation),
-        position: Some(position),
-        market_maker: Some(market_maker),
-    })?;
+    if let Some(raw_writer) = raw_writer.as_mut() {
+        raw_writer.append(RawRow {
+            source_file,
+            source_line,
+            event_kind: "L2",
+            market_data_type,
+            source_timestamp,
+            offset_100ns,
+            timestamp_ns,
+            price,
+            price_text,
+            volume,
+            operation: Some(operation),
+            position: Some(position),
+            market_maker: Some(market_maker),
+        })?;
+    }
     Ok(())
+}
+
+fn close_raw_writer(raw_writer: &mut Option<RawParquetWriter>) {
+    if let Some(writer) = raw_writer.take() {
+        let _ = writer.close();
+    }
 }
 
 fn record_common_validation(

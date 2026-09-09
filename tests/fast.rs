@@ -42,6 +42,7 @@ fn run_single(
         ConversionOptions {
             tick_size: tick,
             log: None,
+            write_raw: true,
         },
     )
     .unwrap();
