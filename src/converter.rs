@@ -144,7 +144,7 @@ pub fn convert_source(
     let mut files = Vec::<FileReport>::new();
     let mut totals = Totals::default();
     let mut sequence_id = 0i64;
-    let mut csv_read_time = Duration::ZERO;
+    let csv_read_time = Duration::ZERO;
     let mut processing_time = Duration::ZERO;
     let mut peak_rss = memory_stats().map_or(0, |stats| stats.physical_mem);
 
@@ -169,8 +169,8 @@ pub fn convert_source(
         let mut current_ask: Option<Price> = None;
         let mut source_line = 0i64;
 
+        let file_processing_started = Instant::now();
         loop {
-            let read_started = Instant::now();
             let has_record = match reader.read_byte_record(&mut record) {
                 Ok(value) => value,
                 Err(error) => {
@@ -196,12 +196,10 @@ pub fn convert_source(
                     bail!(message);
                 }
             };
-            csv_read_time += read_started.elapsed();
             if !has_record {
                 break;
             }
             source_line += 1;
-            let process_started = Instant::now();
             if record.is_empty() || record.iter().all(|field| trim_ascii(field).is_empty()) {
                 bail!("{}:{}: blank row", source_file, source_line);
             }
@@ -268,13 +266,13 @@ pub fn convert_source(
                 );
                 bail!(message);
             }
-            processing_time += process_started.elapsed();
             if source_line % 50_000 == 0
                 && let Some(stats) = memory_stats()
             {
                 peak_rss = peak_rss.max(stats.physical_mem);
             }
         }
+        processing_time += file_processing_started.elapsed();
         if validation.raw_rows == 0 {
             let message = format!("{}: CSV contains no events", source_file);
             validation.parse_errors += 1;
