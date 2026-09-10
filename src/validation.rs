@@ -6,7 +6,7 @@ use crate::decimal::{ExactDecimal, format_exact};
 
 #[derive(Debug, Default)]
 pub struct FileValidation {
-    pub raw_rows: u64,
+    pub total_events: u64,
     pub l1: u64,
     pub l2: u64,
     pub l1_by_type: [u64; 11],
@@ -69,7 +69,7 @@ impl FileValidation {
             date,
             filename,
             status: self.status().to_string(),
-            raw_rows: self.raw_rows,
+            total_events: self.total_events,
             l1: self.l1,
             l2: self.l2,
             l1_by_type: L1Counts::from_array(self.l1_by_type),
@@ -154,7 +154,7 @@ impl L1Counts {
 
 #[derive(Clone, Debug, Default, Serialize)]
 pub struct Totals {
-    pub raw_rows: u64,
+    pub total_events: u64,
     pub l1: u64,
     pub l2: u64,
     pub l1_by_type: L1Counts,
@@ -177,7 +177,7 @@ pub struct Totals {
 
 impl Totals {
     pub fn add(&mut self, file: &FileValidation) {
-        self.raw_rows += file.raw_rows;
+        self.total_events += file.total_events;
         self.l1 += file.l1;
         self.l2 += file.l2;
         self.l1_by_type.add_array(file.l1_by_type);
@@ -204,7 +204,7 @@ pub struct FileReport {
     pub date: Option<String>,
     pub filename: String,
     pub status: String,
-    pub raw_rows: u64,
+    pub total_events: u64,
     pub l1: u64,
     pub l2: u64,
     pub l1_by_type: L1Counts,
@@ -239,10 +239,11 @@ pub struct ValidationDocument {
     pub source: String,
     pub contract: String,
     pub instrument: String,
+    pub date: String,
     pub source_timezone: &'static str,
     pub timezone: &'static str,
     pub compression: &'static str,
-    pub tick_size: Option<String>,
+    pub tick_size: String,
     pub tick_alignment: TickAlignment,
     pub warnings: Vec<String>,
     pub errors: Vec<String>,
@@ -257,7 +258,8 @@ impl ValidationDocument {
         source: String,
         contract: String,
         instrument: String,
-        tick_size: Option<ExactDecimal>,
+        date: String,
+        tick_size: ExactDecimal,
         files: Vec<FileReport>,
         totals: Totals,
         warnings: Vec<String>,
@@ -273,20 +275,20 @@ impl ValidationDocument {
                 "PASS".to_string()
             }
         });
-        let tick_text = tick_size.map(format_exact);
-        let performed = tick_size.is_some();
+        let tick_text = format_exact(tick_size);
         Self {
             status,
             source,
             contract,
             instrument,
+            date,
             source_timezone: "Europe/Berlin",
             timezone: "America/Chicago",
             compression: "zstd",
             tick_size: tick_text.clone(),
             tick_alignment: TickAlignment {
-                status: if performed { "PERFORMED" } else { "NOT_PERFORMED" },
-                performed,
+                status: "PERFORMED",
+                performed: true,
             },
             warnings,
             errors,
@@ -299,10 +301,9 @@ impl ValidationDocument {
                 "Ambiguous Berlin DST fall-back seconds use zoneinfo fold=0 because CSV rows have no fold flag.".into(),
                 "Nonexistent Berlin wall times fail instead of being normalized implicitly.".into(),
                 "Missing BBO sides are stored as null; aggressor is UNKNOWN.".into(),
-                match tick_text {
-                    Some(value) => format!("Tick alignment was performed with Tick Size {value}."),
-                    None => "Tick alignment was not performed because Tick Size was empty.".into(),
-                },
+                "ReplayTradeExporter uses -1.7976931348623157E+308 (Double.MinValue) as its sentinel for uninitialized Bid/Ask; Parquet stores null for the same semantic state without contaminating the real-price domain.".into(),
+                "Replay Double.MinValue matches Parquet null only when that BBO side was genuinely absent; no other value is normalized.".into(),
+                format!("Tick alignment was performed with Tick Size {tick_text}."),
             ],
         }
     }

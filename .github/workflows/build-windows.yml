@@ -3,19 +3,27 @@ name: Build Windows EXE
 on:
   workflow_dispatch:
 
+permissions:
+  contents: read
+
 jobs:
   build-windows:
     runs-on: windows-latest
+    timeout-minutes: 30
 
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
 
+      - name: Run tests
+        run: cargo test --locked
+
       - name: Build release
-        run: cargo build --release
+        run: cargo build --release --locked
 
       - name: Upload EXE
         uses: actions/upload-artifact@v4
         with:
-          name: windows-exe
-          path: target/release/*.exe
+          name: trade-converter-rust-windows-x86_64
+          path: target/release/trade-converter-rust.exe
+          if-no-files-found: error

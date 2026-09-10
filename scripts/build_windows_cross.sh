@@ -3,7 +3,7 @@ set -eu
 
 ROOT=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
 TARGET=x86_64-pc-windows-gnu
-DESTINATION="$ROOT/dist/windows/NRDToParquet.exe"
+DESTINATION="$ROOT/dist/windows/trade-converter-rust.exe"
 
 command -v x86_64-w64-mingw32-gcc >/dev/null 2>&1 || {
     printf 'Missing MinGW cross-compiler: install mingw-w64 first.\n' >&2
